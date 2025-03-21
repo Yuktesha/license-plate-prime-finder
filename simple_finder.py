@@ -143,16 +143,16 @@ def find_closest_primes(number, count=10, has_letters=False):
                 conn.execute('INSERT INTO primes VALUES (?, ?, ?)', (i+1, prime, 0))
             conn.commit()
         
-        # 查詢比number大的最小質數
+        # 查詢比number大的質數
         larger_primes = conn.execute(
             'SELECT value FROM primes WHERE value >= ? ORDER BY value ASC LIMIT ?',
-            (number, count // 2 + 1)
+            (number, count)  # 直接查詢 count 個，而不是 count // 2 + 1
         ).fetchall()
         
-        # 查詢比number小的最大質數
+        # 查詢比number小的質數
         smaller_primes = conn.execute(
             'SELECT value FROM primes WHERE value < ? ORDER BY value DESC LIMIT ?',
-            (number, count // 2 + 1)
+            (number, count)  # 直接查詢 count 個，而不是 count // 2 + 1
         ).fetchall()
         
         logger.info(f"查詢結果: 較大質數 {len(larger_primes)} 個, 較小質數 {len(smaller_primes)} 個")
@@ -199,8 +199,6 @@ def find_closest_primes(number, count=10, has_letters=False):
     
     except Exception as e:
         logger.error(f"查詢質數時出錯: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
         return []
     
     finally:
