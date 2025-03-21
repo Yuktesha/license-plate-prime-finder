@@ -10,13 +10,52 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger('LicensePlatePrimeFinder')
 
 app = Flask(__name__)
+
+# 列出目錄內容的函數
+def list_directory_contents(directory):
+    try:
+        if os.path.exists(directory):
+            files = os.listdir(directory)
+            logger.info(f"目錄 {directory} 的內容: {files}")
+            return files
+        else:
+            logger.warning(f"目錄 {directory} 不存在")
+            return []
+    except Exception as e:
+        logger.error(f"列出目錄 {directory} 的內容時出錯: {e}")
+        return []
+
+# 在應用啟動時列出重要目錄的內容
+@app.before_first_request
+def log_directories():
+    # 列出當前目錄
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    logger.info(f"當前目錄: {current_dir}")
+    list_directory_contents(current_dir)
+    
+    # 列出 backend 目錄（如果存在）
+    backend_dir = os.path.join(current_dir, 'backend')
+    list_directory_contents(backend_dir)
+    
+    # 列出 Render 上可能的目錄
+    render_dirs = [
+        '/opt/render/project/src/',
+        '/opt/render/project/src/backend/',
+        '/app/',
+        '/app/backend/'
+    ]
+    for dir in render_dirs:
+        list_directory_contents(dir)
+
 # 數據庫路徑
 # 檢查多個可能的路徑
 DB_PATHS = [
     os.path.join(os.path.dirname(os.path.abspath(__file__)), 'backend', 'primes.db'),  # 本地開發路徑
     '/opt/render/project/src/backend/primes.db',  # Render 上的路徑
     os.path.join(os.path.dirname(os.path.abspath(__file__)), 'primes.db'),  # 根目錄
-    '/opt/render/project/src/primes.db'  # Render 根目錄
+    '/opt/render/project/src/primes.db',  # Render 根目錄
+    '/app/primes.db',  # Docker 容器中的路徑
+    '/app/backend/primes.db'  # Docker 容器中的 backend 路徑
 ]
 
 def is_prime(n):
