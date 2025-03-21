@@ -1,0 +1,23 @@
+# 忽略數據庫文件
+backend/primes.db
+
+# Python 緩存文件
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 日誌文件
+*.log
+
+# 環境文件
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDE 文件
+.idea/
+.vscode/
+*.swp
+*.swo
