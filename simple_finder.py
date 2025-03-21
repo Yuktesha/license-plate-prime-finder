@@ -48,14 +48,22 @@ def log_directories():
         list_directory_contents(dir)
 
 # 數據庫路徑
-# 檢查多個可能的路徑
+# 檢查多個可能的路徑，包括與 prime_sum.py 相關的路徑
 DB_PATHS = [
     os.path.join(os.path.dirname(os.path.abspath(__file__)), 'backend', 'primes.db'),  # 本地開發路徑
     '/opt/render/project/src/backend/primes.db',  # Render 上的路徑
     os.path.join(os.path.dirname(os.path.abspath(__file__)), 'primes.db'),  # 根目錄
     '/opt/render/project/src/primes.db',  # Render 根目錄
     '/app/primes.db',  # Docker 容器中的路徑
-    '/app/backend/primes.db'  # Docker 容器中的 backend 路徑
+    '/app/backend/primes.db',  # Docker 容器中的 backend 路徑
+    # 與 prime_sum.py 相關的可能路徑
+    '/opt/render/project/src/prime_sum_db.sqlite',
+    '/opt/render/project/src/prime_numbers.db',
+    '/opt/render/project/src/primes.sqlite',
+    '/opt/render/project/src/prime_sum.db',
+    # 嘗試查找任何 .db 或 .sqlite 文件
+    '/opt/render/project/src/*.db',
+    '/opt/render/project/src/*.sqlite'
 ]
 
 def is_prime(n):
@@ -156,83 +164,54 @@ def find_closest_primes(number, count=10, has_letters=False):
     try:
         logger.info(f"查詢最接近 {number} 的質數，數量: {count}，是否包含字母: {has_letters}")
         
-        # 檢查數據庫中是否有質數表
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='primes'")
-        if not cursor.fetchone():
-            logger.error("數據庫中沒有primes表，創建測試數據")
-            # 創建表格
-            conn.execute('CREATE TABLE primes (id INTEGER PRIMARY KEY, value INTEGER, created_at TIMESTAMP)')
-            
-            # 添加一些測試質數數據
-            test_primes = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71]
-            for i, prime in enumerate(test_primes):
-                conn.execute('INSERT INTO primes VALUES (?, ?, ?)', (i+1, prime, 0))
-            conn.commit()
-        
-        # 檢查數據庫中的質數數量
-        cursor.execute("SELECT COUNT(*) FROM primes")
-        prime_count = cursor.fetchone()[0]
-        logger.info(f"數據庫中有 {prime_count} 個質數")
-        
-        # 如果數據庫為空，添加一些測試數據
-        if prime_count == 0:
-            logger.warning("數據庫為空，添加測試數據")
-            test_primes = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71]
-            for i, prime in enumerate(test_primes):
-                conn.execute('INSERT INTO primes VALUES (?, ?, ?)', (i+1, prime, 0))
-            conn.commit()
-        
-        # 查詢比number大的質數
+        # 查詢大於等於指定數字的質數
+        logger.info(f"查詢大於等於 {number} 的 {count} 個質數")
         larger_primes = conn.execute(
             'SELECT value FROM primes WHERE value >= ? ORDER BY value ASC LIMIT ?',
-            (number, count)  # 直接查詢 count 個，而不是 count // 2 + 1
+            (number, count)
         ).fetchall()
         
-        # 查詢比number小的質數
+        # 查詢小於指定數字的質數
+        logger.info(f"查詢小於 {number} 的 {count} 個質數")
         smaller_primes = conn.execute(
             'SELECT value FROM primes WHERE value < ? ORDER BY value DESC LIMIT ?',
-            (number, count)  # 直接查詢 count 個，而不是 count // 2 + 1
+            (number, count)
         ).fetchall()
         
-        logger.info(f"查詢結果: 較大質數 {len(larger_primes)} 個, 較小質數 {len(smaller_primes)} 個")
+        # 提取質數值並計算與指定數字的距離
+        result = []
         
-        # 合併結果並按與number的距離排序
-        results = []
-        
-        for row in smaller_primes:
-            prime = row[0]  # 使用索引而不是列名
-            distance = number - prime
-            result = {
-                'prime_base10': prime,
-                'distance': distance
-            }
-            if has_letters:
-                result['prime_base36'] = to_base36(prime)
-            else:
-                result['prime_base36'] = str(prime)
-            results.append(result)
-        
+        # 處理較大的質數
         for row in larger_primes:
             prime = row[0]  # 使用索引而不是列名
             distance = prime - number
-            result = {
-                'prime_base10': prime,
-                'distance': distance
-            }
-            if has_letters:
-                result['prime_base36'] = to_base36(prime)
-            else:
-                result['prime_base36'] = str(prime)
-            results.append(result)
+            result.append((prime, distance))
+        
+        # 處理較小的質數
+        for row in smaller_primes:
+            prime = row[0]  # 使用索引而不是列名
+            distance = number - prime
+            result.append((prime, distance))
         
         # 按距離排序
-        results.sort(key=lambda x: x['distance'])
+        result.sort(key=lambda x: x[1])
         
         # 限制結果數量
-        results = results[:count]
+        result = result[:count]
         
-        # 記錄結果
+        # 將結果轉換為字典
+        results = []
+        for prime, distance in result:
+            if has_letters:
+                prime_base36 = to_base36(prime)
+            else:
+                prime_base36 = str(prime)
+            results.append({
+                'prime_base10': prime,
+                'prime_base36': prime_base36,
+                'distance': distance
+            })
+        
         logger.info(f"最終結果: {results}")
         
         return results
@@ -391,7 +370,8 @@ def db_info():
     info = {
         'current_directory': os.path.dirname(os.path.abspath(__file__)),
         'db_paths_checked': DB_PATHS,
-        'directories': {}
+        'directories': {},
+        'all_db_files': []
     }
     
     # 列出當前目錄
@@ -411,6 +391,35 @@ def db_info():
     ]
     for dir in render_dirs:
         info['directories'][dir] = list_directory_contents(dir)
+        
+        # 嘗試查找任何 .db 或 .sqlite 文件
+        try:
+            if os.path.exists(dir):
+                for file in os.listdir(dir):
+                    if file.endswith('.db') or file.endswith('.sqlite'):
+                        db_path = os.path.join(dir, file)
+                        info['all_db_files'].append(db_path)
+                        # 嘗試連接到這個數據庫
+                        try:
+                            conn = sqlite3.connect(db_path)
+                            cursor = conn.cursor()
+                            # 檢查是否有 primes 表
+                            cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                            tables = [table[0] for table in cursor.fetchall()]
+                            info[f'db_file_{file}'] = {
+                                'path': db_path,
+                                'tables': tables
+                            }
+                            # 如果有 primes 表，檢查其內容
+                            if 'primes' in tables:
+                                cursor.execute("SELECT COUNT(*) FROM primes")
+                                count = cursor.fetchone()[0]
+                                info[f'db_file_{file}']['primes_count'] = count
+                            conn.close()
+                        except Exception as e:
+                            info[f'db_file_{file}_error'] = str(e)
+        except Exception as e:
+            info[f'dir_{dir}_error'] = str(e)
     
     # 檢查數據庫連接
     conn = None
@@ -418,6 +427,14 @@ def db_info():
     db_path_used = None
     
     for db_path in DB_PATHS:
+        # 如果路徑包含通配符，嘗試查找匹配的文件
+        if '*' in db_path:
+            import glob
+            matching_files = glob.glob(db_path)
+            for file_path in matching_files:
+                info['all_db_files'].append(file_path)
+            continue
+            
         if os.path.exists(db_path):
             try:
                 conn = sqlite3.connect(db_path)
