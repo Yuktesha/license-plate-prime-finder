@@ -385,6 +385,83 @@ def index():
     '''
     return template
 
+@app.route('/db-info')
+def db_info():
+    """顯示數據庫信息的端點"""
+    info = {
+        'current_directory': os.path.dirname(os.path.abspath(__file__)),
+        'db_paths_checked': DB_PATHS,
+        'directories': {}
+    }
+    
+    # 列出當前目錄
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    info['directories'][current_dir] = list_directory_contents(current_dir)
+    
+    # 列出 backend 目錄（如果存在）
+    backend_dir = os.path.join(current_dir, 'backend')
+    info['directories'][backend_dir] = list_directory_contents(backend_dir)
+    
+    # 列出 Render 上可能的目錄
+    render_dirs = [
+        '/opt/render/project/src/',
+        '/opt/render/project/src/backend/',
+        '/app/',
+        '/app/backend/'
+    ]
+    for dir in render_dirs:
+        info['directories'][dir] = list_directory_contents(dir)
+    
+    # 檢查數據庫連接
+    conn = None
+    db_found = False
+    db_path_used = None
+    
+    for db_path in DB_PATHS:
+        if os.path.exists(db_path):
+            try:
+                conn = sqlite3.connect(db_path)
+                cursor = conn.cursor()
+                # 檢查表是否存在
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='primes'")
+                if cursor.fetchone():
+                    # 檢查表中的數據
+                    cursor.execute("SELECT COUNT(*) FROM primes")
+                    count = cursor.fetchone()[0]
+                    info['db_status'] = f"找到數據庫: {db_path}，包含 {count} 個質數"
+                    db_found = True
+                    db_path_used = db_path
+                    break
+                else:
+                    info['db_status'] = f"找到數據庫文件: {db_path}，但沒有 primes 表"
+            except Exception as e:
+                info['db_status'] = f"嘗試連接數據庫 {db_path} 時出錯: {str(e)}"
+            finally:
+                if conn:
+                    conn.close()
+    
+    if not db_found:
+        info['db_status'] = "未找到有效的質數數據庫"
+    
+    # 檢查內存數據庫
+    if not db_found:
+        try:
+            conn = get_db_connection()
+            if conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT COUNT(*) FROM primes")
+                count = cursor.fetchone()[0]
+                info['memory_db_status'] = f"使用內存數據庫，包含 {count} 個質數"
+            else:
+                info['memory_db_status'] = "無法創建內存數據庫"
+        except Exception as e:
+            info['memory_db_status'] = f"檢查內存數據庫時出錯: {str(e)}"
+        finally:
+            if conn:
+                conn.close()
+    
+    return jsonify(info)
+
 @app.route('/search', methods=['POST'])
 def search():
     try:
