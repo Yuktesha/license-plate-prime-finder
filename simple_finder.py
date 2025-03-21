@@ -4,12 +4,126 @@ import logging
 from flask import Flask, request, render_template_string, jsonify
 import json
 import random
+import requests
+import io
+import math
 
 # 設置日誌
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('LicensePlatePrimeFinder')
 
 app = Flask(__name__)
+
+# PrimesDB 相關常量和函數
+PRIMESDB_URL = "https://github.com/pekesoft/PrimesDB/raw/main/PrimesDB/0000.pdb"
+PRIMESDB_CACHE_FILE = "primesdb_cache.bin"
+primesdb_data = None
+
+def download_primesdb():
+    """下載 PrimesDB 數據文件"""
+    global primesdb_data
+    try:
+        # 首先檢查是否有本地緩存
+        if os.path.exists(PRIMESDB_CACHE_FILE):
+            logger.info(f"從本地緩存加載 PrimesDB: {PRIMESDB_CACHE_FILE}")
+            with open(PRIMESDB_CACHE_FILE, 'rb') as f:
+                primesdb_data = f.read()
+            return True
+        
+        # 如果沒有本地緩存，從 GitHub 下載
+        logger.info(f"從 GitHub 下載 PrimesDB: {PRIMESDB_URL}")
+        response = requests.get(PRIMESDB_URL)
+        if response.status_code == 200:
+            primesdb_data = response.content
+            # 保存到本地緩存
+            with open(PRIMESDB_CACHE_FILE, 'wb') as f:
+                f.write(primesdb_data)
+            logger.info(f"PrimesDB 下載成功，大小: {len(primesdb_data)} 字節")
+            return True
+        else:
+            logger.error(f"下載 PrimesDB 失敗: {response.status_code}")
+            return False
+    except Exception as e:
+        logger.error(f"下載 PrimesDB 時出錯: {e}")
+        return False
+
+def is_prime_primesdb(number):
+    """使用 PrimesDB 檢查一個數字是否為質數"""
+    global primesdb_data
+    
+    # 如果數據未加載，嘗試加載
+    if primesdb_data is None:
+        if not download_primesdb():
+            # 如果無法加載 PrimesDB，回退到傳統方法
+            return is_prime(number)
+    
+    # 使用 PrimesDB 算法檢查質數
+    # 首先檢查基本情況
+    if number < 2:
+        return False
+    if number == 2 or number == 3 or number == 5 or number == 7:
+        return True
+    if number % 2 == 0 or number % 3 == 0 or number % 5 == 0:
+        return False
+    
+    # 只檢查末尾為 1, 3, 7, 9 的數字
+    last_digit = number % 10
+    if last_digit not in [1, 3, 7, 9]:
+        return False
+    
+    # 計算 PrimesDB 中的位置
+    decade = number // 10
+    address = int(decade / 2 + 0.5) - 1
+    
+    # 檢查地址是否在數據範圍內
+    if address < 0 or address >= len(primesdb_data):
+        # 如果超出範圍，回退到傳統方法
+        return is_prime(number)
+    
+    # 計算位偏移
+    bit_positions = {1: 0, 3: 1, 7: 2, 9: 3}
+    bit_pos = bit_positions[last_digit]
+    
+    # 如果十位數是偶數，使用高位元組
+    if decade % 2 == 0:
+        bit_pos += 4
+    
+    # 獲取字節並檢查相應的位
+    byte_value = primesdb_data[address]
+    is_prime_value = (byte_value >> bit_pos) & 1
+    
+    return is_prime_value == 1
+
+def find_primes_near(number, count, direction):
+    """查找指定數字附近的質數"""
+    global primesdb_data
+    
+    # 如果數據未加載，嘗試加載
+    if primesdb_data is None:
+        if not download_primesdb():
+            # 如果無法加載 PrimesDB，回退到傳統方法
+            return []
+    
+    result = []
+    current = number
+    
+    # 根據方向調整步進
+    step = 1 if direction == 'larger' else -1
+    
+    # 如果是向下查找，先減 1
+    if direction == 'smaller':
+        current -= 1
+    # 如果是向上查找，先加 1
+    else:
+        current += 1
+    
+    # 查找指定數量的質數
+    while len(result) < count and current > 1 and current < 10**10:  # 設置一個上限，避免無限循環
+        if is_prime_primesdb(current):
+            result.append(current)
+        current += step
+    
+    return result
 
 # 列出目錄內容的函數
 def list_directory_contents(directory):
@@ -26,7 +140,6 @@ def list_directory_contents(directory):
         return []
 
 # 在應用啟動時列出重要目錄的內容
-@app.before_first_request
 def log_directories():
     # 列出當前目錄
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -46,6 +159,12 @@ def log_directories():
     ]
     for dir in render_dirs:
         list_directory_contents(dir)
+
+# 使用 with app.app_context() 替代 before_first_request
+with app.app_context():
+    log_directories()
+    # 預加載 PrimesDB 數據
+    download_primesdb()
 
 # 數據庫路徑
 # 檢查多個可能的路徑，包括與 prime_sum.py 相關的路徑
@@ -154,42 +273,26 @@ def to_base36(number):
     return result
 
 def find_closest_primes(number, count=10, has_letters=False):
-    """找出最接近給定數字的質數"""
-    conn = get_db_connection()
-    
-    if not conn:
-        logger.error("無法獲取資料庫連接")
-        return []
-    
+    """找出離指定數字最近的質數"""
     try:
         logger.info(f"查詢最接近 {number} 的質數，數量: {count}，是否包含字母: {has_letters}")
         
-        # 查詢大於等於指定數字的質數
-        logger.info(f"查詢大於等於 {number} 的 {count} 個質數")
-        larger_primes = conn.execute(
-            'SELECT value FROM primes WHERE value >= ? ORDER BY value ASC LIMIT ?',
-            (number, count)
-        ).fetchall()
+        # 使用 PrimesDB 查找較大和較小的質數
+        larger_primes = find_primes_near(number, count, 'larger')
+        smaller_primes = find_primes_near(number, count, 'smaller')
         
-        # 查詢小於指定數字的質數
-        logger.info(f"查詢小於 {number} 的 {count} 個質數")
-        smaller_primes = conn.execute(
-            'SELECT value FROM primes WHERE value < ? ORDER BY value DESC LIMIT ?',
-            (number, count)
-        ).fetchall()
+        logger.info(f"查詢結果: 較大質數 {len(larger_primes)} 個, 較小質數 {len(smaller_primes)} 個")
         
-        # 提取質數值並計算與指定數字的距離
+        # 合併結果並計算距離
         result = []
         
         # 處理較大的質數
-        for row in larger_primes:
-            prime = row[0]  # 使用索引而不是列名
+        for prime in larger_primes:
             distance = prime - number
             result.append((prime, distance))
         
         # 處理較小的質數
-        for row in smaller_primes:
-            prime = row[0]  # 使用索引而不是列名
+        for prime in smaller_primes:
             distance = number - prime
             result.append((prime, distance))
         
@@ -215,13 +318,9 @@ def find_closest_primes(number, count=10, has_letters=False):
         logger.info(f"最終結果: {results}")
         
         return results
-    
     except Exception as e:
         logger.error(f"查詢質數時出錯: {e}")
         return []
-    
-    finally:
-        conn.close()
 
 @app.route('/')
 def index():
