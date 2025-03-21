@@ -5,76 +5,77 @@ from flask import Flask, request, render_template_string, jsonify
 import json
 import random
 
-# 設定日誌
+# 設置日誌
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('LicensePlatePrimeFinder')
 
 app = Flask(__name__)
 # 數據庫路徑
-# 使用相對路徑，這樣在 Render 上也能正常工作
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'backend', 'primes.db')
+# 檢查多個可能的路徑
+DB_PATHS = [
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'backend', 'primes.db'),  # 本地開發路徑
+    '/opt/render/project/src/backend/primes.db',  # Render 上的路徑
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'primes.db'),  # 根目錄
+    '/opt/render/project/src/primes.db'  # Render 根目錄
+]
+
+def is_prime(n):
+    """檢查一個數字是否為質數"""
+    if n <= 1:
+        return False
+    if n <= 3:
+        return True
+    if n % 2 == 0 or n % 3 == 0:
+        return False
+    i = 5
+    while i * i <= n:
+        if n % i == 0 or n % (i + 2) == 0:
+            return False
+        i += 6
+    return True
 
 # 如果資料庫不存在，使用內存資料庫並添加一些測試數據
 def get_db_connection():
     """連接到質數資料庫"""
     try:
-        logger.info(f"嘗試連接資料庫: {DB_PATH}")
-        logger.info(f"資料庫文件是否存在: {os.path.exists(DB_PATH)}")
+        # 嘗試所有可能的路徑
+        for db_path in DB_PATHS:
+            logger.info(f"嘗試連接資料庫: {db_path}")
+            if os.path.exists(db_path):
+                logger.info(f"連接到實際資料庫: {db_path}")
+                conn = sqlite3.connect(db_path)
+                conn.row_factory = sqlite3.Row
+                logger.info("資料庫連接成功")
+                return conn
         
-        if os.path.exists(DB_PATH):
-            logger.info(f"連接到實際資料庫: {DB_PATH}")
-            conn = sqlite3.connect(DB_PATH)
-            conn.row_factory = sqlite3.Row
-            logger.info("資料庫連接成功")
-            return conn
-        else:
-            # 如果資料庫不存在，使用內存資料庫
-            logger.warning(f"資料庫不存在: {DB_PATH}，使用內存資料庫")
-            conn = sqlite3.connect(':memory:')
-            conn.row_factory = sqlite3.Row
-            
-            # 創建表格
-            conn.execute('CREATE TABLE primes (id INTEGER PRIMARY KEY, value INTEGER, created_at TIMESTAMP)')
-            
-            # 添加一些測試質數數據 - 增加更多質數以提高準確性
-            test_primes = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 
-                          73, 79, 83, 89, 97, 101, 103, 107, 109, 113, 127, 131, 137, 139, 149, 151, 
-                          157, 163, 167, 173, 179, 181, 191, 193, 197, 199, 211, 223, 227, 229, 233, 
-                          239, 241, 251, 257, 263, 269, 271, 277, 281, 283, 293, 307, 311, 313, 317, 
-                          331, 337, 347, 349, 353, 359, 367, 373, 379, 383, 389, 397, 401, 409, 419, 
-                          421, 431, 433, 439, 443, 449, 457, 461, 463, 467, 479, 487, 491, 499, 503, 
-                          509, 521, 523, 541, 547, 557, 563, 569, 571, 577, 587, 593, 599, 601, 607, 
-                          613, 617, 619, 631, 641, 643, 647, 653, 659, 661, 673, 677, 683, 691, 701, 
-                          709, 719, 727, 733, 739, 743, 751, 757, 761, 769, 773, 787, 797, 809, 811, 
-                          821, 823, 827, 829, 839, 853, 857, 859, 863, 877, 881, 883, 887, 907, 911, 
-                          919, 929, 937, 941, 947, 953, 967, 971, 977, 983, 991, 997, 1009, 1013, 1019, 1021, 
-                          1031, 1033, 1039, 1049, 1051, 1061, 1063, 1069, 1087, 1091, 1093, 1097, 1103, 1109, 1117, 
-                          1123, 1129, 1151, 1153, 1163, 1171, 1181, 1187, 1193, 1201, 1213, 1217, 1223, 1229, 1231, 
-                          1237, 1249, 1259, 1277, 1279, 1283, 1289, 1291, 1297, 1301, 1303, 1307, 1319, 1321, 1327, 
-                          1361, 1367, 1373, 1381, 1399, 1409, 1423, 1427, 1429, 1433, 1439, 1447, 1451, 1453, 1459, 
-                          1471, 1481, 1483, 1487, 1489, 1493, 1499, 1511, 1523, 1531, 1543, 1549, 1553, 1559, 1567, 
-                          1571, 1579, 1583, 1597, 1601, 1607, 1609, 1613, 1619, 1621, 1627, 1637, 1657, 1663, 1667, 
-                          1669, 1693, 1697, 1699, 1709, 1721, 1723, 1733, 1741, 1747, 1753, 1759, 1777, 1783, 1787, 
-                          1789, 1801, 1811, 1823, 1831, 1847, 1861, 1867, 1871, 1873, 1877, 1879, 1889, 1901, 1907, 
-                          1913, 1931, 1933, 1949, 1951, 1973, 1979, 1987, 1993, 1997, 1999, 2003, 2011, 2017, 2027, 
-                          2029, 2039, 2053, 2063, 2069, 2081, 2083, 2087, 2089, 2099, 2111, 2113, 2129, 2131, 2137]
-            
-            for i, prime in enumerate(test_primes):
-                conn.execute('INSERT INTO primes VALUES (?, ?, ?)', (i+1, prime, 0))
-            
-            conn.commit()
-            logger.info("內存資料庫創建並填充測試數據成功")
-            return conn
-    except Exception as e:
-        logger.error(f"資料庫連接錯誤: {e}")
-        # 如果連接失敗，也使用內存資料庫
+        # 如果所有路徑都不存在，使用內存資料庫並生成更多質數
+        logger.warning(f"所有資料庫路徑都不存在，使用內存資料庫並生成質數")
         conn = sqlite3.connect(':memory:')
         conn.row_factory = sqlite3.Row
+        
+        # 創建表格
         conn.execute('CREATE TABLE primes (id INTEGER PRIMARY KEY, value INTEGER, created_at TIMESTAMP)')
-        conn.execute('INSERT INTO primes VALUES (1, 2, 0), (2, 3, 0), (3, 5, 0), (4, 7, 0), (5, 11, 0)')
+        
+        # 生成更多的質數，特別是大質數
+        # 先添加一些小質數
+        test_primes = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71]
+        
+        # 添加更多質數，直到 10000
+        for i in range(100, 10000):
+            if is_prime(i):
+                test_primes.append(i)
+        
+        # 插入所有質數
+        for i, prime in enumerate(test_primes):
+            conn.execute('INSERT INTO primes VALUES (?, ?, ?)', (i+1, prime, 0))
+        
         conn.commit()
-        logger.warning("使用最小內存資料庫作為後備")
+        logger.info(f"內存資料庫創建成功，共添加 {len(test_primes)} 個質數")
         return conn
+        
+    except Exception as e:
+        logger.error(f"連接資料庫時出錯: {e}")
+        return None
 
 def contains_letters(text):
     """檢查文字是否包含字母"""
@@ -203,21 +204,6 @@ def find_closest_primes(number, count=10, has_letters=False):
     
     finally:
         conn.close()
-
-def is_prime(n):
-    """檢查一個數字是否為質數"""
-    if n <= 1:
-        return False
-    if n <= 3:
-        return True
-    if n % 2 == 0 or n % 3 == 0:
-        return False
-    i = 5
-    while i * i <= n:
-        if n % i == 0 or n % (i + 2) == 0:
-            return False
-        i += 6
-    return True
 
 @app.route('/')
 def index():
